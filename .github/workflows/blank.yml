@@ -1,4 +1,3 @@
-
 name: 🤖 AYRA Auto Build APK
 
 on:
@@ -12,40 +11,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout repo ──────────────────────────────────────
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Find ZIP and extract ───────────────────────────────
       - name: 📦 Find & Extract ZIP
         run: |
-          echo "=== Looking for ZIP file ==="
-          find . -name "*.zip" | head -5
-
           ZIP=$(find . -name "*.zip" | grep -v ".git" | head -1)
-
           if [ -z "$ZIP" ]; then
-            echo "❌ No ZIP found!"
-            exit 1
+            echo "No ZIP found - using repo files directly"
+          else
+            echo "✅ Found ZIP: $ZIP"
+            mkdir -p /tmp/ayra_extracted
+            unzip -o "$ZIP" -d /tmp/ayra_extracted/
+            ROOT=$(find /tmp/ayra_extracted -maxdepth 4 -name "settings.gradle" | head -1 | xargs dirname)
+            echo "Project root: $ROOT"
+            cp -r "$ROOT"/. $GITHUB_WORKSPACE/
+            ls $GITHUB_WORKSPACE/
           fi
 
-          echo "✅ Found ZIP: $ZIP"
-          mkdir -p /tmp/ayra_extracted
-          unzip -o "$ZIP" -d /tmp/ayra_extracted/
-
-          echo "=== Extracted contents ==="
-          ls /tmp/ayra_extracted/
-
-          # Find build.gradle (root of Android project)
-          ROOT=$(find /tmp/ayra_extracted -name "build.gradle" -not -path "*/app/*" | head -1 | xargs dirname)
-          echo "=== Android project root: $ROOT ==="
-
-          # Copy project files to workspace
-          cp -r "$ROOT"/. $GITHUB_WORKSPACE/
-          echo "=== Workspace after copy ==="
-          ls $GITHUB_WORKSPACE/
-
-      # ── 3. JDK 17 ─────────────────────────────────────────────
       - name: ☕ Setup JDK 17
         uses: actions/setup-java@v4
         with:
@@ -53,7 +36,33 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # ── 4. Gradle cache ───────────────────────────────────────
+      - name: 🔧 Fix Gradle Wrapper JAR
+        run: |
+          mkdir -p gradle/wrapper
+
+          # Download gradle-wrapper.jar
+          curl -fsSL \
+            "https://github.com/gradle/gradle/raw/v8.1.1/gradle/wrapper/gradle-wrapper.jar" \
+            -o gradle/wrapper/gradle-wrapper.jar
+
+          # Create/overwrite wrapper properties
+          cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.1.1-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
+
+          echo "gradle-wrapper.jar size: $(ls -lh gradle/wrapper/gradle-wrapper.jar)"
+
+      - name: 🔧 Fix gradlew
+        run: |
+          if [ ! -f gradlew ]; then
+            curl -fsSL "https://raw.githubusercontent.com/gradle/gradle/v8.1.1/gradlew" -o gradlew
+          fi
+          chmod +x gradlew
+
       - name: 📦 Cache Gradle
         uses: actions/cache@v4
         with:
@@ -63,7 +72,6 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
 
-      # ── 5. Lottie placeholder ─────────────────────────────────
       - name: 🎨 Create Lottie Assets
         run: |
           mkdir -p app/src/main/assets
@@ -71,17 +79,11 @@ jobs:
           [ ! -f app/src/main/assets/ayra_orb.json ]    && echo "$LOTTIE" > app/src/main/assets/ayra_orb.json
           [ ! -f app/src/main/assets/ayra_splash.json ] && echo "$LOTTIE" > app/src/main/assets/ayra_splash.json
 
-      # ── 6. gradlew permission ─────────────────────────────────
-      - name: 🔧 Fix gradlew
-        run: chmod +x gradlew
-
-      # ── 7. Build APK ──────────────────────────────────────────
       - name: 🔨 Build Debug APK
         run: ./gradlew assembleDebug --stacktrace --no-daemon
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx2g"
 
-      # ── 8. Upload APK ─────────────────────────────────────────
       - name: 📤 Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -92,5 +94,4 @@ jobs:
       - name: 🎉 Done
         run: |
           echo "✅ AYRA APK Build সফল!"
-          echo "👉 Actions → AYRA-APK → Download করুন"
           ls -lh app/build/outputs/apk/debug/
